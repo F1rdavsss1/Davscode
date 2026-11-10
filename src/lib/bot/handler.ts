@@ -2,7 +2,8 @@ import "server-only";
 import { ownerId } from "../env";
 import { answerCallback, sendMessage } from "../telegram";
 import { handleOwnerCallback, handleOwnerText } from "./admin";
-import { handleClientCallback, handleClientText, showMenu, startBrief, startQuestion } from "./client";
+import { casesScreen, faqScreen, screenForStart, servicesScreen } from "./catalog";
+import { handleClientCallback, handleClientText, showMenu, showScreen, startBrief, startQuestion } from "./client";
 import { clearSession } from "./session";
 import type { TgUpdate } from "./types";
 
@@ -34,8 +35,15 @@ export async function handleUpdate(update: TgUpdate): Promise<void> {
 
   if (text === "/start" || text.startsWith("/start ")) {
     await clearSession(msg.from.id);
-    return showMenu(msg.chat.id);
+    // Ссылки с сайта: t.me/<бот>?start=services | cases | faq | case_<slug> | brief
+    const payload = text.slice("/start".length).trim();
+    if (payload === "brief") return startBrief(msg.chat.id, msg.from.id);
+    const screen = payload ? screenForStart(payload) : null;
+    return screen ? showScreen(msg.chat.id, screen) : showMenu(msg.chat.id);
   }
+  if (text === "/services") return showScreen(msg.chat.id, servicesScreen());
+  if (text === "/cases") return showScreen(msg.chat.id, casesScreen());
+  if (text === "/faq") return showScreen(msg.chat.id, faqScreen());
   if (text === "/brief") return startBrief(msg.chat.id, msg.from.id);
   if (text === "/ask") return startQuestion(msg.chat.id, msg.from.id);
   if (text === "/stop" || text === "/cancel") {

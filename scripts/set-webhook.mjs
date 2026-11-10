@@ -31,6 +31,9 @@ await call("setWebhook", {
 await call("setMyCommands", {
   commands: [
     { command: "start", description: "Меню" },
+    { command: "services", description: "Услуги и цены" },
+    { command: "cases", description: "Портфолио" },
+    { command: "faq", description: "Вопросы и ответы" },
     { command: "brief", description: "Оставить заявку" },
     { command: "ask", description: "Задать вопрос" },
     { command: "stop", description: "Завершить диалог" },
@@ -44,7 +47,7 @@ if (owner) {
     commands: [
       { command: "stats", description: "Статистика заявок" },
       { command: "lead", description: "Открыть заявку: /lead DC-000001" },
-      { command: "retry", description: "Повторить неудавшиеся задания" },
+      { command: "retry", description: "Повторить неотправленные уведомления" },
       { command: "help", description: "Команды владельца" },
       { command: "start", description: "Клиентское меню" },
     ],

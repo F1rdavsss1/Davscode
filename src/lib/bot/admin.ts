@@ -215,7 +215,8 @@ export async function handleOwnerText(msg: TgMessage): Promise<boolean> {
     return true;
   }
   if (session && !["reject_note", "case_link"].includes(session.state)) return false;
-  if (text.startsWith("/start")) return false;
+  // Клиентские разделы владелец видит так же, как клиент.
+  if (text.startsWith("/start") || ["/services", "/cases", "/faq", "/brief", "/ask"].includes(text)) return false;
 
   await sendMessage(chatId, ADMIN_HELP);
   return true;

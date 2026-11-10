@@ -19,7 +19,8 @@ import {
 import { createLead } from "../leads";
 import { ownerId } from "../env";
 import { hit } from "../rateLimit";
-import { escapeHtml as e, sendMessage, type InlineKeyboard } from "../telegram";
+import { editMessage, escapeHtml as e, sendMessage } from "../telegram";
+import { isProjectType, menuScreen, screenFor, type Screen } from "./catalog";
 import { clearSession, getSession, linkMessage, setSession } from "./session";
 import type { TgCallback, TgMessage, TgUser } from "./types";
 
@@ -37,23 +38,20 @@ type Brief = {
 const QUESTIONS_PER_HOUR = 20;
 
 export async function showMenu(chatId: number) {
-  const keyboard: InlineKeyboard = [
-    [{ text: "Портфолио", url: `${site.url}/cases` }],
-    [{ text: "Оставить заявку", callback_data: "M:lead" }],
-    [{ text: "Задать вопрос", callback_data: "M:ask" }],
-  ];
-  await sendMessage(
-    chatId,
-    [
-      "Привет! Это бот <b>DavsCode</b> — независимого разработчика сайтов и Telegram-ботов для малого бизнеса.",
-      "",
-      "Здесь можно оставить заявку на проект или задать вопрос — сообщения читаю я лично.",
-      site.telegram ? `Написать напрямую: @${site.telegram.username}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    keyboard,
-  );
+  await showScreen(chatId, menuScreen());
+}
+
+/** Показывает раздел: редактирует сообщение с кнопкой, а если это невозможно — отправляет новое. */
+export async function showScreen(chatId: number, screen: Screen, messageId?: number) {
+  if (messageId) {
+    try {
+      await editMessage(chatId, messageId, screen.text, screen.keyboard);
+      return;
+    } catch {
+      // Сообщение слишком старое или удалено — отправим новое.
+    }
+  }
+  await sendMessage(chatId, screen.text, screen.keyboard);
 }
 
 const cancelRow = [{ text: "Отменить", callback_data: "B:x" }];
@@ -65,8 +63,18 @@ async function askType(chatId: number) {
   ]);
 }
 
-export async function startBrief(chatId: number, userId: number) {
-  await setSession(userId, "brief_type", { key: randomUUID() } satisfies Brief);
+const DESCRIPTION_PROMPT =
+  "<b>Шаг 2 / 4 · Задача</b>\nОпишите, что нужно разработать и какую задачу должен решать проект.\n\n<i>Например: «Лендинг для стоматологии с онлайн-записью и уведомлениями в Telegram».</i>";
+
+/** Бриф. С preset (кнопки «Обсудить» и «Хочу похожий проект») шаг выбора типа пропускается — как на сайте. */
+export async function startBrief(chatId: number, userId: number, preset?: ProjectType) {
+  const brief: Brief = { key: randomUUID(), ...(preset ? { projectType: preset } : {}) };
+  if (preset) {
+    await setSession(userId, "brief_desc", brief);
+    await sendMessage(chatId, `Тип проекта: <b>${PROJECT_TYPE_LABELS[preset]}</b>\n\n${DESCRIPTION_PROMPT}`, [cancelRow]);
+    return;
+  }
+  await setSession(userId, "brief_type", brief);
   await askType(chatId);
 }
 
@@ -83,6 +91,19 @@ export async function handleClientCallback(cb: TgCallback): Promise<string | fal
   const userId = cb.from.id;
   const data = cb.data ?? "";
 
+  // Разделы «Услуги», «Портфолио», «Вопросы» — те же данные, что на сайте.
+  const screen = screenFor(data);
+  if (screen === "not_found") return "Раздел обновился — откройте меню заново: /start";
+  if (screen) {
+    await showScreen(chatId, screen, cb.message?.message_id);
+    return "";
+  }
+  if (data.startsWith("P:")) {
+    const type = data.slice(2);
+    if (!isProjectType(type)) return false;
+    await startBrief(chatId, userId, type);
+    return "";
+  }
   if (data === "M:lead") return startBrief(chatId, userId).then(() => "");
   if (data === "M:ask") return startQuestion(chatId, userId).then(() => "");
   if (data === "Q:end") {
@@ -105,11 +126,7 @@ export async function handleClientCallback(cb: TgCallback): Promise<string | fal
   if (field === "t" && session.state === "brief_type" && (PROJECT_TYPES as readonly string[]).includes(value)) {
     brief.projectType = value as ProjectType;
     await setSession(userId, "brief_desc", brief);
-    await sendMessage(
-      chatId,
-      "<b>Шаг 2 / 4 · Задача</b>\nОпишите, что нужно разработать и какую задачу должен решать проект.\n\n<i>Например: «Лендинг для стоматологии с онлайн-записью и уведомлениями в Telegram».</i>",
-      [cancelRow],
-    );
+    await sendMessage(chatId, DESCRIPTION_PROMPT, [cancelRow]);
     return "";
   }
   if (field === "b" && session.state === "brief_budget" && (BUDGETS as readonly string[]).includes(value)) {
@@ -273,7 +290,7 @@ async function submitBrief(chatId: number, user: TgUser, brief: Brief) {
   await sendMessage(
     chatId,
     `Спасибо! Заявка <b>#${lead.id}</b> принята. Я постараюсь ответить в течение часа в рабочее время. Пока можете посмотреть портфолио.`,
-    [[{ text: "Портфолио", url: `${site.url}/cases` }]],
+    [[{ text: "Портфолио", callback_data: "M:cases" }], [{ text: "Меню", callback_data: "M:menu" }]],
   );
 }
 
