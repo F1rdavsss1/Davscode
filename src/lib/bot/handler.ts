@@ -3,7 +3,7 @@ import { ownerId } from "../env";
 import { answerCallback, sendMessage } from "../telegram";
 import { handleOwnerCallback, handleOwnerText } from "./admin";
 import { handleClientCallback, handleClientText, showMenu, startBrief, startQuestion } from "./client";
-import { clearSession, rememberUser } from "./session";
+import { clearSession } from "./session";
 import type { TgUpdate } from "./types";
 
 // Префиксы callback_data административных кнопок.
@@ -15,7 +15,6 @@ export async function handleUpdate(update: TgUpdate): Promise<void> {
   if (update.callback_query) {
     const cb = update.callback_query;
     if (cb.from.is_bot) return;
-    await rememberUser(cb.from);
     const data = cb.data ?? "";
     if (ADMIN_PREFIXES.some((p) => data.startsWith(p))) {
       // Права проверяются на сервере при каждом действии, а не скрытием кнопок.
@@ -29,7 +28,6 @@ export async function handleUpdate(update: TgUpdate): Promise<void> {
 
   const msg = update.message;
   if (!msg?.from || msg.from.is_bot || msg.chat.type !== "private") return;
-  await rememberUser(msg.from);
   const text = msg.text?.trim() ?? "";
 
   if (msg.from.id === owner && (await handleOwnerText(msg))) return;

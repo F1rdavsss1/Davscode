@@ -1,20 +1,15 @@
 import "server-only";
 import { createHmac } from "node:crypto";
-import { db } from "./db";
+import { kvIncrement } from "./kv";
 
 /**
- * Счётчик в фиксированном окне, общий для всех serverless-вызовов (хранится в Postgres).
+ * Счётчик в фиксированном окне, общий для всех serverless-вызовов (хранится на листе «Служебное»).
  * Возвращает true, если лимит ещё не превышен (и засчитывает попытку).
  */
 export async function hit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
-  const sql = db();
-  const [row] = await sql<{ count: number }[]>`
-    insert into rate_limits (key, window_start, count)
-    values (${key}, to_timestamp(floor(extract(epoch from now()) / ${windowSeconds}) * ${windowSeconds}), 1)
-    on conflict (key, window_start) do update set count = rate_limits.count + 1
-    returning count
-  `;
-  return row.count <= limit;
+  const window = Math.floor(Date.now() / 1000 / windowSeconds);
+  const count = await kvIncrement(`rate:${key}:${window}`, windowSeconds * 2);
+  return count <= limit;
 }
 
 /** IP не храним в открытом виде — только HMAC. */

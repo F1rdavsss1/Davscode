@@ -1,6 +1,10 @@
-// Готовит Google-таблицу: лист «Заявки» с заголовками и лист «Аналитика» с формулами.
+// Готовит Google-таблицу — сейчас она основное хранилище заявок:
+//   «Заявки»     — одна строка на заявку, колонка U скрыта (служебные данные);
+//   «Аналитика»  — формулы;
+//   «Журнал»     — скрытый, история действий;
+//   «Служебное»  — скрытый, состояние бота и лимиты.
 // Запуск: npm run sheets:init (нужны GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY).
-// Безопасно запускать повторно: существующие строки заявок не трогаются, «Аналитика» перезаписывается.
+// Безопасно запускать повторно: существующие строки не трогаются, «Аналитика» перезаписывается.
 import { createSign } from "node:crypto";
 import { existsSync } from "node:fs";
 
@@ -15,10 +19,14 @@ if (!sheetId || !email || !key) {
 
 const LEADS = "Заявки";
 const ANALYTICS = "Аналитика";
+const LOG = "Журнал";
+const KV = "Служебное";
+const LOG_HEADERS = ["Дата", "ID заявки", "Кто", "Действие", "Из статуса", "В статус", "Детали"];
+const KV_HEADERS = ["Ключ", "Значение", "Истекает (unix ms)"];
 const HEADERS = [
   "ID", "Дата создания", "Источник", "Тип проекта", "Задача", "Бюджет", "Срок", "Имя", "Контакт", "Статус",
   "Причина отказа", "Ссылка на кейс", "Заметки", "UTM Source", "UTM Medium", "UTM Campaign", "UTM Content", "UTM Term",
-  "Дата последнего изменения", "Состояние синхронизации",
+  "Дата последнего изменения", "Состояние синхронизации", "Служебные данные (не редактировать)",
 ];
 
 const b64 = (s) => Buffer.from(s).toString("base64url");
@@ -50,7 +58,10 @@ async function api(path, method = "GET", body) {
 // 1. Листы
 const meta = await api("?fields=sheets.properties");
 const existing = new Map(meta.sheets.map((s) => [s.properties.title, s.properties.sheetId]));
-const add = [LEADS, ANALYTICS].filter((t) => !existing.has(t)).map((title) => ({ addSheet: { properties: { title } } }));
+const hiddenSheets = new Set([LOG, KV]);
+const add = [LEADS, ANALYTICS, LOG, KV]
+  .filter((t) => !existing.has(t))
+  .map((title) => ({ addSheet: { properties: { title, hidden: hiddenSheets.has(title), gridProperties: { frozenRowCount: 1 } } } }));
 if (add.length) {
   const res = await api(":batchUpdate", "POST", { requests: add });
   for (const r of res.replies) existing.set(r.addSheet.properties.title, r.addSheet.properties.sheetId);
@@ -58,7 +69,9 @@ if (add.length) {
 
 // 2. Заголовки «Заявки», закреплённая строка, защита системных колонок (кроме «Заметки») предупреждением
 const range = (sheet, a1) => encodeURIComponent(`'${sheet}'!${a1}`);
-await api(`/values/${range(LEADS, "A1:T1")}?valueInputOption=RAW`, "PUT", { values: [HEADERS] });
+await api(`/values/${range(LEADS, "A1:U1")}?valueInputOption=RAW`, "PUT", { values: [HEADERS] });
+await api(`/values/${range(LOG, "A1:G1")}?valueInputOption=RAW`, "PUT", { values: [LOG_HEADERS] });
+await api(`/values/${range(KV, "A1:C1")}?valueInputOption=RAW`, "PUT", { values: [KV_HEADERS] });
 const leadsId = existing.get(LEADS);
 await api(":batchUpdate", "POST", {
   requests: [
@@ -68,7 +81,7 @@ await api(":batchUpdate", "POST", {
       addProtectedRange: {
         protectedRange: {
           range: { sheetId: leadsId, startColumnIndex: 0, endColumnIndex: 12 },
-          description: "Заполняется системой. Статусы меняйте через Telegram-бота — правки здесь будут перезаписаны.",
+          description: "Заполняется системой. Статусы меняйте через Telegram-бота — правки здесь будут перезаписаны при следующем изменении заявки.",
           warningOnly: true,
         },
       },
@@ -76,12 +89,14 @@ await api(":batchUpdate", "POST", {
     {
       addProtectedRange: {
         protectedRange: {
-          range: { sheetId: leadsId, startColumnIndex: 13, endColumnIndex: 20 },
-          description: "Заполняется системой.",
+          range: { sheetId: leadsId, startColumnIndex: 13, endColumnIndex: 21 },
+          description: "Заполняется системой. Колонка U — копия заявки, по которой система её читает: не редактируйте и не удаляйте.",
           warningOnly: true,
         },
       },
     },
+    // Колонка U (служебный JSON) скрыта, чтобы не мешать.
+    { updateDimensionProperties: { range: { sheetId: leadsId, dimension: "COLUMNS", startIndex: 20, endIndex: 21 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
   ],
 }).catch((err) => console.warn("Не удалось применить оформление/защиту (возможно, уже есть):", err.message));
 
@@ -103,7 +118,7 @@ rows.push(["", "", ""]);
 push(
   "Дошли до работы, %",
   `=IFERROR(ROUND((COUNTIF(${L("J")};"В работе")+COUNTIF(${L("J")};"Выполнено"))/B${total}*100;1);0)`,
-  "(В работе + Выполнено) / все заявки. Отказы после взятия в работу сюда не входят — полная история в журнале lead_events",
+  "(В работе + Выполнено) / все заявки. Отказы после взятия в работу сюда не входят — полная история на скрытом листе «Журнал»",
 );
 push("Завершены, %", `=IFERROR(ROUND(COUNTIF(${L("J")};"Выполнено")/B${total}*100;1);0)`, "Выполнено / все заявки");
 rows.push(["", "", ""]);
@@ -130,4 +145,4 @@ const values = rows.map((r) => r.map((c) => (typeof c === "string" && c.startsWi
 await api(`/values/${range(ANALYTICS, "A:C")}:clear`, "POST", {});
 await api(`/values/${range(ANALYTICS, `A1:C${values.length}`)}?valueInputOption=USER_ENTERED`, "PUT", { values });
 
-console.log(`Готово: листы «${LEADS}» и «${ANALYTICS}» настроены.`);
+console.log(`Готово: листы «${LEADS}», «${ANALYTICS}», «${LOG}», «${KV}» настроены.`);

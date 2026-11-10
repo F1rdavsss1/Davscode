@@ -1,8 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { site } from "@/config/site";
 import { fieldErrors, leadInputSchema } from "@/lib/leadSchema";
-import { createLead } from "@/lib/leads";
-import { db } from "@/lib/db";
+import { createLead, findLeadByKey } from "@/lib/leads";
 import { processJobs } from "@/lib/jobs";
 import { clientIp, hashIdentifier, hit } from "@/lib/rateLimit";
 
@@ -60,7 +59,7 @@ export async function POST(req: Request) {
 
   try {
     // Повтор того же запроса (тайм-аут, двойное нажатие) возвращает уже созданную заявку и не тратит лимит.
-    const [existing] = await db()<{ id: string }[]>`select id from leads where idempotency_key = ${input.idempotencyKey}`;
+    const existing = await findLeadByKey(input.idempotencyKey);
     if (existing) {
       return NextResponse.json({ ok: true, id: existing.id, status: "accepted", message: "Заявка принята." });
     }
@@ -85,7 +84,7 @@ export async function POST(req: Request) {
     });
 
     // Уведомление и синхронизация — после ответа клиенту. Сбой здесь не теряет заявку:
-    // задания остаются в базе и будут повторены.
+    // состояние уведомления хранится в строке заявки, повтор — по cron или при следующем обращении к боту.
     after(() => processJobs({ leadIds: [lead.id] }).catch((err) => console.error("[lead] jobs:", err)));
 
     return NextResponse.json({ ok: true, id: lead.id, status: "accepted", message: "Заявка принята." }, { status: 201 });

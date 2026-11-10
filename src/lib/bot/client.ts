@@ -246,7 +246,8 @@ async function askConsent(chatId: number, userId: number, brief: Brief) {
 }
 
 async function submitBrief(chatId: number, user: TgUser, brief: Brief) {
-  const { lead } = await createLead({
+  // Повторное нажатие безопасно: ключ заявки тот же, дубль не создастся.
+  const saved = await createLead({
     idempotencyKey: `bot:${brief.key}`,
     source: "bot",
     projectType: brief.projectType!,
@@ -259,7 +260,15 @@ async function submitBrief(chatId: number, user: TgUser, brief: Brief) {
     telegramUserId: user.id,
     firstTouch: { utm_source: "telegram_bot" },
     lastTouch: { utm_source: "telegram_bot" },
+  }).catch((err) => {
+    console.error("[bot] save failed:", err instanceof Error ? err.message : "unknown");
+    return null;
   });
+  if (!saved) {
+    await sendMessage(chatId, "Не удалось сохранить заявку — временный сбой. Ответы сохранены, нажмите «Согласен и отправить» ещё раз через минуту.");
+    return;
+  }
+  const { lead } = saved;
   await clearSession(user.id);
   await sendMessage(
     chatId,

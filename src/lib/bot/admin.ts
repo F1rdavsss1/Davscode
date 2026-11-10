@@ -1,8 +1,9 @@
 import "server-only";
-import { db } from "../db";
 import { reportTimezone } from "../env";
 import { REJECT_REASONS, STATUS_LABELS, type LeadStatus } from "../leadSchema";
-import { getLead, transitionLead, updateLeadFields, type LeadRow } from "../leads";
+import { getLead, listLeads, transitionLead, updateLeadFields, type LeadRow } from "../leads";
+import { logEvent } from "../eventLog";
+import { kvAddIfAbsent } from "../kv";
 import { retryFailed } from "../jobs";
 import { answerCallback, editMessage, escapeHtml as e, sendMessage, TelegramError } from "../telegram";
 import { CODE_STATUS, clarifyTemplate, leadCardText, leadFullText, leadKeyboard, rejectReasonsKeyboard } from "./cards";
@@ -16,7 +17,7 @@ const ADMIN_HELP = [
   "<b>Команды владельца</b>",
   "/stats — статистика заявок",
   "/lead DC-000001 — открыть заявку",
-  "/retry [DC-000001] — повторить неудавшиеся уведомления и синхронизацию",
+  "/retry [DC-000001] — повторить неотправленные уведомления",
   "",
   "Чтобы ответить клиенту, ответьте (reply) на его сообщение.",
 ].join("\n");
@@ -93,14 +94,9 @@ export async function handleOwnerCallback(cb: TgCallback): Promise<void> {
     const lead = LEAD_ID.test(parts[1]) ? await getLead(parts[1]) : null;
     if (!lead?.telegram_user_id) return answerCallback(cb.id, "Клиент недоступен в боте", true);
     // Защита от двойного нажатия: тот же шаблон не уходит клиенту чаще раза в минуту.
-    const [recent] = await db()`
-      select 1 from lead_events where lead_id = ${lead.id} and action = 'clarify_sent' and created_at > now() - interval '1 minute'
-    `;
-    if (recent) return answerCallback(cb.id, "Уже отправлено");
+    if (!(await kvAddIfAbsent(`clarify:${lead.id}`, 60))) return answerCallback(cb.id, "Уже отправлено");
     const delivered = await deliverToClient(chatId, Number(lead.telegram_user_id), clarifyTemplate(lead));
-    if (delivered) {
-      await db()`insert into lead_events (lead_id, actor, action) values (${lead.id}, ${actor(cb.from.id)}, 'clarify_sent')`;
-    }
+    if (delivered) await logEvent({ leadId: lead.id, actor: actor(cb.from.id), action: "clarify_sent" });
     return answerCallback(cb.id, delivered ? "Отправлено клиенту" : undefined);
   }
 
@@ -194,9 +190,7 @@ export async function handleOwnerText(msg: TgMessage): Promise<boolean> {
       }
       const delivered = await deliverToClient(chatId, link.client, text);
       if (delivered) {
-        if (link.leadId) {
-          await db()`insert into lead_events (lead_id, actor, action) values (${link.leadId}, ${actor(ownerTg)}, 'message_sent')`;
-        }
+        if (link.leadId) await logEvent({ leadId: link.leadId, actor: actor(ownerTg), action: "message_sent" });
         await sendMessage(chatId, "✓ Отправлено клиенту");
       }
       return true;
@@ -229,34 +223,26 @@ export async function handleOwnerText(msg: TgMessage): Promise<boolean> {
 
 async function statsText(): Promise<string> {
   const tz = reportTimezone();
-  const [row] = await db()<Record<string, string>[]>`
-    select
-      count(*) filter (where created_at >= date_trunc('day', now() at time zone ${tz}) at time zone ${tz}) as today,
-      count(*) filter (where created_at >= now() - interval '7 days') as week,
-      count(*) filter (where status = 'new') as new,
-      count(*) filter (where status = 'in_progress') as in_progress,
-      count(*) filter (where status = 'rejected') as rejected,
-      count(*) filter (where status = 'done') as done,
-      count(*) filter (where source = 'site') as site,
-      count(*) filter (where source = 'bot') as bot,
-      count(*) as total
-    from leads
-  `;
-  const failed = await db()<{ n: string }[]>`select count(*) as n from jobs where status = 'failed'`;
+  const leads = await listLeads();
+  const day = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(d);
+  const today = day(new Date());
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  const count = (fn: (l: (typeof leads)[number]) => boolean) => leads.filter(fn).length;
+  const failed = count((l) => l.notify?.status === "failed");
   return [
     "<b>Статистика заявок</b>",
     `<i>Часовой пояс: ${tz}</i>`,
     "",
-    `Сегодня: ${row.today}`,
-    `За 7 дней: ${row.week}`,
-    `Всего: ${row.total}`,
+    `Сегодня: ${count((l) => day(l.created_at) === today)}`,
+    `За 7 дней: ${count((l) => l.created_at.getTime() >= weekAgo)}`,
+    `Всего: ${leads.length}`,
     "",
-    `Новые: ${row.new}`,
-    `В работе: ${row.in_progress}`,
-    `Отказы: ${row.rejected}`,
-    `Выполнено: ${row.done}`,
+    `Новые: ${count((l) => l.status === "new")}`,
+    `В работе: ${count((l) => l.status === "in_progress")}`,
+    `Отказы: ${count((l) => l.status === "rejected")}`,
+    `Выполнено: ${count((l) => l.status === "done")}`,
     "",
-    `Источники — сайт: ${row.site}, бот: ${row.bot}`,
-    Number(failed[0].n) ? `\n⚠️ Неудавшихся заданий: ${failed[0].n} — /retry` : "",
+    `Источники — сайт: ${count((l) => l.source === "site")}, бот: ${count((l) => l.source === "bot")}`,
+    failed ? `\n⚠️ Неотправленных уведомлений: ${failed} — /retry` : "",
   ].join("\n");
 }

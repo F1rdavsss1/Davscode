@@ -1,49 +1,34 @@
 import "server-only";
-import { db } from "../db";
+import { kvAddIfAbsent, kvDelete, kvGet, kvSet } from "../kv";
+
+// Состояние диалогов и связи сообщений хранятся на скрытом листе «Служебное».
 
 export type Session = { state: string; data: Record<string, unknown> };
 
+const DAY = 24 * 3600;
+
 export async function getSession(tgId: number): Promise<Session | null> {
-  const [row] = await db()<{ state: string; data: Record<string, unknown> }[]>`
-    select state, data from bot_sessions where tg_id = ${tgId} and updated_at > now() - interval '1 day'
-  `;
-  return row ?? null;
+  return kvGet<Session>(`session:${tgId}`);
 }
 
 export async function setSession(tgId: number, state: string, data: Record<string, unknown> = {}) {
-  await db()`
-    insert into bot_sessions (tg_id, state, data, updated_at) values (${tgId}, ${state}, ${db().json(data as never)}, now())
-    on conflict (tg_id) do update set state = excluded.state, data = excluded.data, updated_at = now()
-  `;
+  await kvSet(`session:${tgId}`, { state, data } satisfies Session, DAY);
 }
 
 export async function clearSession(tgId: number) {
-  await db()`delete from bot_sessions where tg_id = ${tgId}`;
+  await kvDelete(`session:${tgId}`);
 }
 
-export async function rememberUser(user: { id: number; username?: string; first_name?: string }) {
-  await db()`
-    insert into telegram_users (tg_id, username, first_name) values (${user.id}, ${user.username ?? null}, ${user.first_name ?? null})
-    on conflict (tg_id) do update set username = excluded.username, first_name = excluded.first_name, last_seen_at = now()
-  `;
-}
-
+/** Связь «сообщение у владельца → клиент», чтобы ответ уходил нужному человеку. Хранится 30 дней. */
 export async function linkMessage(ownerMessageId: number, clientTgId: number, leadId: string | null = null) {
-  await db()`
-    insert into message_links (owner_message_id, client_tg_id, lead_id) values (${ownerMessageId}, ${clientTgId}, ${leadId})
-    on conflict (owner_message_id) do nothing
-  `;
+  await kvSet(`msg:${ownerMessageId}`, { client: clientTgId, leadId }, 30 * DAY);
 }
 
 export async function linkedClient(ownerMessageId: number): Promise<{ client: number; leadId: string | null } | null> {
-  const [row] = await db()<{ client_tg_id: string; lead_id: string | null }[]>`
-    select client_tg_id::text, lead_id from message_links where owner_message_id = ${ownerMessageId}
-  `;
-  return row ? { client: Number(row.client_tg_id), leadId: row.lead_id } : null;
+  return kvGet<{ client: number; leadId: string | null }>(`msg:${ownerMessageId}`);
 }
 
 /** Повторная доставка вебхука с тем же update_id обрабатывается один раз. */
 export async function markUpdateProcessed(updateId: number): Promise<boolean> {
-  const rows = await db()`insert into processed_updates (update_id) values (${updateId}) on conflict do nothing returning update_id`;
-  return rows.length > 0;
+  return kvAddIfAbsent(`upd:${updateId}`, DAY);
 }

@@ -1,8 +1,16 @@
 import "server-only";
-import { createSign } from "node:crypto";
-import { requireEnv } from "./env";
+import { a1, deleteRows, ensureSheet, formatDate, rowFromRange, sheetsApi } from "./google";
 import { BUDGET_LABELS, CONTACT_METHOD_LABELS, PROJECT_TYPE_LABELS, REJECT_REASON_LABELS, STATUS_LABELS, TIMELINE_LABELS } from "./leadSchema";
-import type { LeadRow } from "./leads";
+import type { StoredLead } from "./leads";
+
+/*
+ * Лист «Заявки» — основное хранилище заявок (пока нет сервера с базой).
+ *
+ * A–T — колонки для человека (ТЗ 12.2). U — служебная копия заявки в JSON:
+ * по ней система читает заявку обратно, поэтому видимые колонки можно сортировать
+ * и фильтровать, а случайная правка в них будет исправлена при следующей записи.
+ * M («Заметки») система никогда не перезаписывает.
+ */
 
 export const LEADS_SHEET = "Заявки";
 
@@ -27,85 +35,26 @@ export const LEAD_COLUMNS = [
   "UTM Term",
   "Дата последнего изменения",
   "Состояние синхронизации",
+  "Служебные данные (не редактировать)",
 ];
 
-// Колонка M («Заметки») редактируется вручную и системой никогда не перезаписывается.
-const NOTES_COLUMN_INDEX = 12;
+const NOTES = 12; // индекс колонки M
+const DATA = 20; // индекс колонки U
+const LAST = "U";
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+export type LeadRef = { row: number; lead: StoredLead };
 
-const b64url = (input: string | Buffer) => Buffer.from(input).toString("base64url");
+const ensureLeadsSheet = () => ensureSheet(LEADS_SHEET, LEAD_COLUMNS);
 
-async function accessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.value;
-  const email = requireEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL");
-  const key = requireEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
-  const now = Math.floor(Date.now() / 1000);
-  const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claims = b64url(
-    JSON.stringify({
-      iss: email,
-      // Минимально необходимая область: только таблицы, без доступа к Drive.
-      scope: "https://www.googleapis.com/auth/spreadsheets",
-      aud: "https://oauth2.googleapis.com/token",
-      iat: now,
-      exp: now + 3600,
-    }),
-  );
-  const signature = createSign("RSA-SHA256").update(`${header}.${claims}`).sign(key).toString("base64url");
-  const res = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${header}.${claims}.${signature}`,
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`Google OAuth: HTTP ${res.status}`);
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  cachedToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-  return data.access_token;
+function notifyLabel(lead: StoredLead, tz: string): string {
+  const n = lead.notify;
+  if (n.status === "done") return `Уведомление отправлено ${n.done_at ? formatDate(n.done_at, tz) : ""}`.trim();
+  if (n.status === "failed") return "Уведомление не доставлено — /retry в боте";
+  return n.attempts > 0 ? `Уведомление: повтор (попыток ${n.attempts})` : "Уведомление в очереди";
 }
 
-async function sheetsApi(path: string, init: { method?: string; body?: unknown } = {}) {
-  const id = requireEnv("GOOGLE_SHEETS_ID");
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}${path}`, {
-    method: init.method ?? "GET",
-    headers: { authorization: `Bearer ${await accessToken()}`, "content-type": "application/json" },
-    body: init.body ? JSON.stringify(init.body) : undefined,
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Google Sheets ${init.method ?? "GET"}: HTTP ${res.status} ${text.slice(0, 200)}`);
-  }
-  return res.json();
-}
-
-const range = (a1: string) => encodeURIComponent(`'${LEADS_SHEET}'!${a1}`);
-
-/** «ГГГГ-ММ-ДД ЧЧ:ММ» — сортируется как текст, и формулы листа «Аналитика» фильтруют по префиксу месяца. */
-function formatDate(value: Date | string, tz: string) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(new Date(value))
-      .map((p) => [p.type, p.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
-}
-
-function leadToRow(lead: LeadRow, tz: string): string[] {
+function leadToRow(lead: StoredLead, tz: string): string[] {
   const t = lead.first_touch ?? {};
-  const contact = `${CONTACT_METHOD_LABELS[lead.contact_method]}: ${lead.contact}`;
   return [
     lead.id,
     formatDate(lead.created_at, tz),
@@ -115,11 +64,9 @@ function leadToRow(lead: LeadRow, tz: string): string[] {
     BUDGET_LABELS[lead.budget],
     TIMELINE_LABELS[lead.timeline],
     lead.name,
-    contact,
+    `${CONTACT_METHOD_LABELS[lead.contact_method]}: ${lead.contact}`,
     STATUS_LABELS[lead.status],
-    lead.reject_reason
-      ? REJECT_REASON_LABELS[lead.reject_reason] + (lead.reject_note ? `: ${lead.reject_note}` : "")
-      : "",
+    lead.reject_reason ? REJECT_REASON_LABELS[lead.reject_reason] + (lead.reject_note ? `: ${lead.reject_note}` : "") : "",
     lead.case_url ?? "",
     "", // Заметки — не трогаем
     t.utm_source ?? "",
@@ -128,50 +75,73 @@ function leadToRow(lead: LeadRow, tz: string): string[] {
     t.utm_content ?? "",
     t.utm_term ?? "",
     formatDate(lead.updated_at, tz),
-    `OK ${formatDate(new Date(), tz)}`,
+    notifyLabel(lead, tz),
+    JSON.stringify(lead),
   ];
 }
 
+function parseLead(raw: string | undefined): StoredLead | null {
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as StoredLead;
+    if (typeof d?.id !== "string" || typeof d.idempotency_key !== "string") return null;
+    return { ...d, created_at: new Date(d.created_at), updated_at: new Date(d.updated_at) };
+  } catch {
+    return null;
+  }
+}
+
+/** Все заявки в порядке строк. Строки без служебных данных (ручные, пустые) пропускаются. */
+export async function readLeads(): Promise<LeadRef[]> {
+  await ensureLeadsSheet();
+  const res = await sheetsApi<{ values?: string[][] }>(`/values/${a1(LEADS_SHEET, `A2:${LAST}`)}`);
+  const out: LeadRef[] = [];
+  (res.values ?? []).forEach((cells, i) => {
+    const lead = parseLead(cells[DATA]);
+    if (lead) out.push({ row: i + 2, lead });
+  });
+  return out;
+}
+
+/** Добавляет строку и возвращает её номер. Значения пишутся как RAW — текст клиента не станет формулой. */
+export async function appendLead(lead: StoredLead, tz: string): Promise<number> {
+  await ensureLeadsSheet();
+  const res = await sheetsApi<{ updates?: { updatedRange?: string } }>(
+    `/values/${a1(LEADS_SHEET, `A:${LAST}`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { method: "POST", body: { values: [leadToRow(lead, tz)] } },
+  );
+  const row = rowFromRange(res.updates?.updatedRange);
+  if (!row) throw new Error("Google Sheets: append did not return a row");
+  return row;
+}
+
 /**
- * Добавляет или обновляет строку заявки. Строка ищется по ID в колонке A,
- * поэтому повторная синхронизация не создаёт дубликатов, а сортировка таблицы ей не мешает.
- * Значения пишутся как RAW — текст клиента не может стать формулой.
+ * Перезаписывает строку заявки целиком, кроме колонки «Заметки».
+ * Номер строки — только подсказка: если таблицу отсортировали, строка ищется заново по ID,
+ * чтобы не затереть чужую заявку.
  */
-export async function upsertLeadRow(lead: LeadRow, tz: string): Promise<void> {
-  const column = (await sheetsApi(`/values/${range("A:A")}`)) as { values?: string[][] };
-  const ids = column.values?.map((r) => r[0]) ?? [];
-  const row = leadToRow(lead, tz);
-
-  if (ids.length === 0) {
-    await sheetsApi(`/values/${range("A1:T1")}?valueInputOption=RAW`, {
-      method: "PUT",
-      body: { values: [LEAD_COLUMNS] },
-    });
-    ids.push(LEAD_COLUMNS[0]);
+export async function writeLead(hintRow: number, lead: StoredLead, tz: string, currentId = lead.id): Promise<void> {
+  const check = await sheetsApi<{ values?: string[][] }>(`/values/${a1(LEADS_SHEET, `${LAST}${hintRow}`)}`);
+  let row = hintRow;
+  if (parseLead(check.values?.[0]?.[0])?.id !== currentId) {
+    const found = (await readLeads()).find((r) => r.lead.id === currentId);
+    if (!found) throw new Error(`Lead ${currentId} not found in sheet`);
+    row = found.row;
   }
-
-  const index = ids.indexOf(lead.id);
-  if (index === -1) {
-    await sheetsApi(`/values/${range("A:T")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-      method: "POST",
-      body: { values: [row] },
-    });
-    return;
-  }
-
-  const n = index + 1;
+  const values = leadToRow(lead, tz);
   await sheetsApi(`/values:batchUpdate`, {
     method: "POST",
     body: {
       valueInputOption: "RAW",
       data: [
-        { range: `'${LEADS_SHEET}'!A${n}:L${n}`, values: [row.slice(0, NOTES_COLUMN_INDEX)] },
-        { range: `'${LEADS_SHEET}'!N${n}:T${n}`, values: [row.slice(NOTES_COLUMN_INDEX + 1)] },
+        { range: `'${LEADS_SHEET}'!A${row}:L${row}`, values: [values.slice(0, NOTES)] },
+        { range: `'${LEADS_SHEET}'!N${row}:${LAST}${row}`, values: [values.slice(NOTES + 1)] },
       ],
     },
   });
 }
 
-export function sheetsConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_SHEETS_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
+export async function deleteLeadRow(row: number): Promise<void> {
+  await ensureLeadsSheet();
+  await deleteRows(LEADS_SHEET, [row]);
 }
