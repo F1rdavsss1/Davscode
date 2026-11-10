@@ -120,7 +120,7 @@ export default function HomePage() {
       </div>
 
       {/* 01 — Услуги */}
-      <section id="services" className="section" aria-labelledby="services-title">
+      <section id="services" data-reveal className="section" aria-labelledby="services-title">
         <div className="container">
           <div className="section__head">
             <p className="eyebrow">01 — Услуги</p>
@@ -166,7 +166,7 @@ export default function HomePage() {
       </section>
 
       {/* 02 — Работы */}
-      <section id="works" className="section section--flush-top" aria-labelledby="works-title">
+      <section id="works" data-reveal className="section section--flush-top" aria-labelledby="works-title">
         <div className="container">
           <div className="section__head">
             <p className="eyebrow">02 — Работы</p>
@@ -189,7 +189,7 @@ export default function HomePage() {
       </section>
 
       {/* 03 — Как работаю */}
-      <section id="process" className="section section--deep" aria-labelledby="process-title">
+      <section id="process" data-reveal className="section section--deep" aria-labelledby="process-title">
         <div className="container">
           <div className="section__head">
             <p className="eyebrow">03 — Как работаю</p>
@@ -213,7 +213,7 @@ export default function HomePage() {
       </section>
 
       {/* 04 — FAQ */}
-      <section id="faq" className="section" aria-labelledby="faq-title">
+      <section id="faq" data-reveal className="section" aria-labelledby="faq-title">
         <div className="container faq">
           <div className="stack-head">
             <p className="eyebrow">04 — FAQ</p>
@@ -248,7 +248,7 @@ export default function HomePage() {
       </section>
 
       {/* Контакты */}
-      <section id="contacts" className="cta-final" aria-labelledby="cta-title">
+      <section id="contacts" data-reveal className="cta-final" aria-labelledby="cta-title">
         <div className="container cta-final__grid">
           <h2 id="cta-title" className="h2">
             Есть задача? <span className="serif accent">обсудим.</span>

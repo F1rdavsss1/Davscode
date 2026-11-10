@@ -1,19 +1,33 @@
 /* ── Токены ─────────────────────────────────────────────────────── */
 :root {
-  --bg: #1e1e20;
-  --bg-deep: #171719;
-  --surface: #27262b;
+  /* Палитра из ТЗ, раздел 3.2. Акцент — допустимая альтернатива #FF4D2E (как в макетах). */
+  --bg: #1c1c1e;
+  --bg-deep: #161618;
+  --surface: #242426;
+  --raised: #2c2c2f;
   --paper: #ecebe6;
   --paper-2: #d9d6ce;
-  --ink: #ecebe6;
-  --ink-dark: #18181a;
-  --muted: #9d9c98;
-  --muted-2: #74736f;
-  --line: #333236;
+  --ink: #ededed;
+  --ink-2: #c9c8c4;
+  --ink-dark: #1c1c1e;
+  --muted: #9a9a9f;
+  /* Не темнее #8A8A8F: иначе мелкий текст на фоне не проходит WCAG AA (4,5:1). */
+  --muted-2: #8a8a8f;
+  --line: #3a3a3d;
   --line-strong: #4b4a4f;
-  --accent: #ff5a1f;
-  --accent-ink: #18181a;
+  --accent: #ff4d2e;
+  --accent-hover: #ff6a50;
+  --accent-ink: #1c1c1e;
+  --error: #ff6b5e;
+  --success: #7bd88f;
 
+  /* Отступы под вырез, Dynamic Island и индикатор Home (viewport-fit=cover). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  --font-display: var(--font-unbounded), var(--font-manrope), system-ui, sans-serif;
   --font-sans: var(--font-manrope), system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-serif: var(--font-cormorant), Georgia, serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -130,7 +144,7 @@ button {
   width: 100%;
   max-width: calc(var(--container) + var(--gutter) * 2);
   margin: 0 auto;
-  padding: 0 var(--gutter);
+  padding: 0 max(var(--gutter), var(--safe-right)) 0 max(var(--gutter), var(--safe-left));
 }
 
 /* ── Типографика ────────────────────────────────────────────────── */
@@ -142,22 +156,28 @@ button {
   color: var(--muted);
 }
 
+/* Заголовки — Unbounded (ТЗ 3.3). Шрифт широкий, поэтому трекинг плотный. */
 .display {
-  font-weight: 800;
-  font-size: clamp(42px, 7.2vw, 92px);
-  line-height: 0.98;
-  letter-spacing: -0.045em;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(34px, 7.4vw, 104px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  overflow-wrap: break-word;
 }
 
 .h2 {
-  font-weight: 800;
-  font-size: clamp(34px, 5vw, 56px);
-  line-height: 1;
-  letter-spacing: -0.04em;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(28px, 5vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.045em;
+  overflow-wrap: break-word;
 }
 
 .h3 {
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-weight: 600;
   font-size: 20px;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -182,7 +202,7 @@ button {
 
 .lead {
   font-size: clamp(16px, 1.4vw, 18px);
-  color: #c9c8c4;
+  color: var(--ink-2);
   max-width: 34em;
 }
 
@@ -240,7 +260,7 @@ button {
 }
 
 .btn--accent:hover {
-  background: #ff7240;
+  background: var(--accent-hover);
 }
 
 .btn--dark {
@@ -272,7 +292,7 @@ button {
 }
 
 .btn--sm {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 14px;
   font-size: 14px;
 }
@@ -297,9 +317,10 @@ button {
   position: sticky;
   top: 0;
   z-index: 50;
-  height: var(--header-h);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px);
+  /* Шапка большая — без backdrop-filter (на iOS он тяжёлый), просто плотный фон. */
+  height: calc(var(--header-h) + var(--safe-top));
+  padding-top: var(--safe-top);
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
 
@@ -345,8 +366,8 @@ button {
 
 .menu-toggle {
   display: none;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border: 1px solid var(--line-strong);
   background: transparent;
   align-items: center;
@@ -355,10 +376,12 @@ button {
 
 .mobile-menu {
   position: fixed;
-  inset: var(--header-h) 0 0 0;
+  inset: calc(var(--header-h) + var(--safe-top)) 0 0 0;
   z-index: 49;
   background: var(--bg);
-  padding: 24px var(--gutter);
+  padding: 24px max(var(--gutter), var(--safe-right)) calc(24px + var(--safe-bottom)) max(var(--gutter), var(--safe-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -369,9 +392,10 @@ button {
   justify-content: space-between;
   padding: 18px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 
 .mobile-menu a span {
@@ -392,7 +416,20 @@ button {
 
 /* ── Hero ───────────────────────────────────────────────────────── */
 .hero {
-  padding: clamp(48px, 9vw, 112px) 0 clamp(56px, 8vw, 96px);
+  padding: clamp(40px, 8vw, 104px) 0 clamp(48px, 7vw, 88px);
+}
+
+/* Первый экран на десктопе — по высоте окна. svh, а не vh: на iOS экран не «прыгает». */
+@media (min-width: 861px) {
+  .hero {
+    display: flex;
+    align-items: center;
+    min-height: calc(100vh - var(--header-h));
+    min-height: calc(100svh - var(--header-h) - var(--safe-top));
+  }
+  .hero > .container {
+    width: 100%;
+  }
 }
 
 .hero__grid {
@@ -1223,7 +1260,7 @@ fieldset.field {
 }
 
 .input[aria-invalid="true"] {
-  border-color: var(--accent);
+  border-color: var(--error);
 }
 
 textarea.input {
@@ -1259,7 +1296,7 @@ textarea.input {
   gap: 12px;
   align-items: flex-start;
   font-size: 14px;
-  color: #c9c8c4;
+  color: var(--ink-2);
   cursor: pointer;
 }
 
@@ -1425,7 +1462,7 @@ textarea.input {
   gap: 8px 22px;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #c9c8c4;
+  color: var(--ink-2);
 }
 
 .footer__links a {
@@ -1456,7 +1493,7 @@ textarea.input {
   display: inline-flex;
   gap: 8px;
   font-size: 14px;
-  color: #c9c8c4;
+  color: var(--ink-2);
   margin-bottom: 40px;
 }
 
@@ -1477,7 +1514,7 @@ textarea.input {
 
 .case__summary {
   font-size: clamp(17px, 1.6vw, 20px);
-  color: #c9c8c4;
+  color: var(--ink-2);
   max-width: 34em;
   margin-bottom: 36px;
 }
@@ -1535,7 +1572,7 @@ textarea.input {
 }
 
 .case__block p {
-  color: #c9c8c4;
+  color: var(--ink-2);
 }
 
 .case__quote {
@@ -1620,7 +1657,7 @@ textarea.input {
 }
 
 .case__result p {
-  color: #c9c8c4;
+  color: var(--ink-2);
 }
 
 .similar {
@@ -1681,7 +1718,7 @@ textarea.input {
 
 .prose {
   max-width: 760px;
-  color: #c9c8c4;
+  color: var(--ink-2);
 }
 
 .prose h2 {
@@ -1788,7 +1825,7 @@ textarea.input {
   font-size: 14px;
   letter-spacing: 0;
   text-transform: none;
-  color: #c9c8c4;
+  color: var(--ink-2);
 }
 
 .work__open,
@@ -1800,4 +1837,72 @@ textarea.input {
 
 .nowrap {
   white-space: nowrap;
+}
+
+/* ── iPhone: нижняя кнопка «Обсудить проект» ───────────────────── */
+.mobile-cta {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .mobile-cta {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    padding: 10px max(16px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(16px, var(--safe-left));
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    transition:
+      transform 0.3s var(--ease),
+      visibility 0.3s;
+  }
+  .mobile-cta[data-hidden="true"] {
+    transform: translateY(100%);
+    visibility: hidden;
+  }
+  .mobile-cta .btn {
+    width: 100%;
+  }
+  /* Место под закреплённую кнопку, чтобы она не перекрывала подвал. */
+  .footer {
+    padding-bottom: calc(36px + 68px + var(--safe-bottom));
+  }
+}
+
+.footer {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* ── Появление блоков при прокрутке (ТЗ 3.5) ───────────────────── */
+/* Скрываем только когда JS подключён (класс на <html>), иначе контент виден всегда. */
+.js-reveal [data-reveal] {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.45s var(--ease),
+    transform 0.45s var(--ease);
+}
+
+.js-reveal [data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js-reveal [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Эффекты наведения — только на устройствах с мышью (ТЗ 3.5). */
+@media (hover: none) {
+  .btn:hover .arrow,
+  .work:hover .work__cover > * {
+    transform: none;
+  }
 }
