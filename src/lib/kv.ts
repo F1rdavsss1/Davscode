@@ -1,5 +1,5 @@
 import "server-only";
-import { a1, deleteRows, ensureSheet, sheetsApi } from "./google";
+import { a1, deleteRows, ensureSheet, sheetsApi, sheetsConfigured } from "./google";
 
 /*
  * Скрытый лист «Служебное» — простое хранилище «ключ → значение» со сроком жизни.
@@ -18,7 +18,15 @@ type Entry = { row: number; key: string; value: string; expires: number };
 
 const ensureKv = () => ensureSheet(KV_SHEET, HEADERS, { hidden: true });
 
+/*
+ * Для локальной разработки без ключей Google — хранилище в памяти процесса `next dev`,
+ * чтобы можно было пройти разделы и диалоги бота. В production без таблицы — ошибка, как и раньше.
+ */
+const memory: Entry[] = [];
+const useMemory = () => !sheetsConfigured() && process.env.NODE_ENV !== "production";
+
 async function readAll(): Promise<Entry[]> {
+  if (useMemory()) return memory.map((e, i) => ({ ...e, row: i + 2 }));
   await ensureKv();
   const res = await sheetsApi<{ values?: string[][] }>(`/values/${a1(KV_SHEET, "A2:C")}`);
   return (res.values ?? []).map((r, i) => ({ row: i + 2, key: r[0] ?? "", value: r[1] ?? "", expires: Number(r[2]) || 0 }));
@@ -33,6 +41,10 @@ function find(entries: Entry[], key: string): Entry | undefined {
 }
 
 async function writeRow(row: number, key: string, value: string, expires: number) {
+  if (useMemory()) {
+    memory[row - 2] = { row, key, value, expires };
+    return;
+  }
   await sheetsApi(`/values/${a1(KV_SHEET, `A${row}:C${row}`)}?valueInputOption=RAW`, {
     method: "PUT",
     body: { values: [[key, value, String(expires)]] },
@@ -40,6 +52,10 @@ async function writeRow(row: number, key: string, value: string, expires: number
 }
 
 async function appendRow(key: string, value: string, expires: number) {
+  if (useMemory()) {
+    memory.push({ row: memory.length + 2, key, value, expires });
+    return;
+  }
   await sheetsApi(`/values/${a1(KV_SHEET, "A:C")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
     method: "POST",
     body: { values: [[key, value, String(expires)]] },
@@ -95,6 +111,10 @@ export async function kvIncrement(key: string, ttlSeconds: number): Promise<numb
 export async function kvCleanup(): Promise<number> {
   const now = Date.now();
   const dead = (await readAll()).filter((e) => !alive(e, now)).map((e) => e.row);
+  if (useMemory()) {
+    for (const row of [...dead].sort((a, b) => b - a)) memory.splice(row - 2, 1);
+    return dead.length;
+  }
   await deleteRows(KV_SHEET, dead);
   return dead.length;
 }

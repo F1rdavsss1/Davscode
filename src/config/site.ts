@@ -5,8 +5,18 @@ import type { ProjectType } from "@/lib/leadSchema";
 
 const env = (value: string | undefined) => (value && value.trim() ? value.trim() : null);
 
-const telegramUsername = env(process.env.NEXT_PUBLIC_TELEGRAM_USERNAME)?.replace(/^@/, "") ?? null;
-const botUsername = env(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME)?.replace(/^@/, "") ?? null;
+/** Принимает «@name», «name», «t.me/name» или «https://t.me/name» и возвращает «name». */
+export function telegramName(value: string | null | undefined): string | null {
+  const name = (value ?? "")
+    .trim()
+    .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\//i, "")
+    .replace(/^@/, "")
+    .replace(/[/?#].*$/, "");
+  return /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(name) ? name : null;
+}
+
+const telegramUsername = telegramName(env(process.env.NEXT_PUBLIC_TELEGRAM_USERNAME));
+const botUsername = telegramName(env(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME));
 
 export const site = {
   name: "DavsCode",

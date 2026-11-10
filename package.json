@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "node scripts/migrate.mjs",
     "sheets:init": "node scripts/sheets-init.mjs",
-    "telegram:webhook": "node scripts/set-webhook.mjs"
+    "telegram:webhook": "node scripts/set-webhook.mjs",
+    "bot:dev": "node scripts/bot-dev.mjs"
   },
   "dependencies": {
     "next": "^16.4.3",
