@@ -1,5 +1,5 @@
 // Готовит Google-таблицу — сейчас она основное хранилище заявок:
-//   «Заявки»     — одна строка на заявку, колонка U скрыта (служебные данные);
+//   «Заявки»     — одна строка на заявку (ТЗ 12.2), колонка V скрыта (служебные данные);
 //   «Аналитика»  — формулы;
 //   «Журнал»     — скрытый, история действий;
 //   «Служебное»  — скрытый, состояние бота и лимиты.
@@ -25,7 +25,7 @@ const LOG_HEADERS = ["Дата", "ID заявки", "Кто", "Действие"
 const KV_HEADERS = ["Ключ", "Значение", "Истекает (unix ms)"];
 const HEADERS = [
   "ID", "Дата создания", "Источник", "Тип проекта", "Задача", "Бюджет", "Срок", "Имя", "Контакт", "Статус",
-  "Причина отказа", "Ссылка на кейс", "Заметки", "UTM Source", "UTM Medium", "UTM Campaign", "UTM Content", "UTM Term",
+  "Причина отказа", "№ договора", "Ссылка на кейс", "Заметки", "UTM Source", "UTM Medium", "UTM Campaign", "UTM Content", "UTM Term",
   "Дата последнего изменения", "Состояние синхронизации", "Служебные данные (не редактировать)",
 ];
 
@@ -69,7 +69,7 @@ if (add.length) {
 
 // 2. Заголовки «Заявки», закреплённая строка, защита системных колонок (кроме «Заметки») предупреждением
 const range = (sheet, a1) => encodeURIComponent(`'${sheet}'!${a1}`);
-await api(`/values/${range(LEADS, "A1:U1")}?valueInputOption=RAW`, "PUT", { values: [HEADERS] });
+await api(`/values/${range(LEADS, "A1:V1")}?valueInputOption=RAW`, "PUT", { values: [HEADERS] });
 await api(`/values/${range(LOG, "A1:G1")}?valueInputOption=RAW`, "PUT", { values: [LOG_HEADERS] });
 await api(`/values/${range(KV, "A1:C1")}?valueInputOption=RAW`, "PUT", { values: [KV_HEADERS] });
 const leadsId = existing.get(LEADS);
@@ -80,7 +80,7 @@ await api(":batchUpdate", "POST", {
     {
       addProtectedRange: {
         protectedRange: {
-          range: { sheetId: leadsId, startColumnIndex: 0, endColumnIndex: 12 },
+          range: { sheetId: leadsId, startColumnIndex: 0, endColumnIndex: 13 },
           description: "Заполняется системой. Статусы меняйте через Telegram-бота — правки здесь будут перезаписаны при следующем изменении заявки.",
           warningOnly: true,
         },
@@ -89,14 +89,14 @@ await api(":batchUpdate", "POST", {
     {
       addProtectedRange: {
         protectedRange: {
-          range: { sheetId: leadsId, startColumnIndex: 13, endColumnIndex: 21 },
-          description: "Заполняется системой. Колонка U — копия заявки, по которой система её читает: не редактируйте и не удаляйте.",
+          range: { sheetId: leadsId, startColumnIndex: 14, endColumnIndex: 22 },
+          description: "Заполняется системой. Колонка V — копия заявки, по которой система её читает: не редактируйте и не удаляйте.",
           warningOnly: true,
         },
       },
     },
-    // Колонка U (служебный JSON) скрыта, чтобы не мешать.
-    { updateDimensionProperties: { range: { sheetId: leadsId, dimension: "COLUMNS", startIndex: 20, endIndex: 21 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
+    // Колонка V (служебный JSON) скрыта, чтобы не мешать.
+    { updateDimensionProperties: { range: { sheetId: leadsId, dimension: "COLUMNS", startIndex: 21, endIndex: 22 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
   ],
 }).catch((err) => console.warn("Не удалось применить оформление/защиту (возможно, уже есть):", err.message));
 
@@ -130,7 +130,7 @@ for (const t of ["Сайт", "Telegram-бот", "Автоматизация", "�
 rows.push(["", "", ""]);
 push("Источник: Сайт", `=COUNTIF(${L("C")};"Сайт")`);
 push("Источник: Бот", `=COUNTIF(${L("C")};"Бот")`);
-push("UTM source заполнен", `=COUNTA(${L("N")})`, "Детализация — фильтром по колонке N на листе «Заявки»");
+push("UTM source заполнен", `=COUNTA(${L("O")})`, "Детализация — фильтром по колонке O на листе «Заявки»");
 rows.push(["", "", ""]);
 const undecided = `COUNTIF(${L("F")};"Пока не определился")`;
 push(

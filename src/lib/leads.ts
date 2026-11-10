@@ -52,6 +52,8 @@ export type NotifyState = {
 /** То, что лежит в служебной колонке строки: заявка + согласие + служебные поля. */
 export type StoredLead = LeadRow & {
   idempotency_key: string;
+  /** Номер договора DC-ГГГГ-NNN — появится на этапе «Предложение» (ТЗ 7.5). */
+  contract_number?: string | null;
   consent: { version: string; given_at: string; channel: "site" | "bot" };
   notify: NotifyState;
 };

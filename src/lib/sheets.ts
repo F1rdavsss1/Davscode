@@ -1,15 +1,15 @@
 import "server-only";
-import { a1, deleteRows, ensureSheet, formatDate, rowFromRange, sheetsApi } from "./google";
+import { a1, col, deleteRows, ensureSheet, formatDate, rowFromRange, sheetsApi } from "./google";
 import { BUDGET_LABELS, CONTACT_METHOD_LABELS, PROJECT_TYPE_LABELS, REJECT_REASON_LABELS, STATUS_LABELS, TIMELINE_LABELS } from "./leadSchema";
 import type { StoredLead } from "./leads";
 
 /*
  * Лист «Заявки» — основное хранилище заявок (пока нет сервера с базой).
  *
- * A–T — колонки для человека (ТЗ 12.2). U — служебная копия заявки в JSON:
+ * A–U — колонки для человека (ТЗ 12.2). V — служебная копия заявки в JSON:
  * по ней система читает заявку обратно, поэтому видимые колонки можно сортировать
  * и фильтровать, а случайная правка в них будет исправлена при следующей записи.
- * M («Заметки») система никогда не перезаписывает.
+ * N («Заметки») система никогда не перезаписывает.
  */
 
 export const LEADS_SHEET = "Заявки";
@@ -26,6 +26,7 @@ export const LEAD_COLUMNS = [
   "Контакт",
   "Статус",
   "Причина отказа",
+  "№ договора",
   "Ссылка на кейс",
   "Заметки",
   "UTM Source",
@@ -38,9 +39,9 @@ export const LEAD_COLUMNS = [
   "Служебные данные (не редактировать)",
 ];
 
-const NOTES = 12; // индекс колонки M
-const DATA = 20; // индекс колонки U
-const LAST = "U";
+const NOTES = LEAD_COLUMNS.indexOf("Заметки"); // 13 → колонка N
+const DATA = LEAD_COLUMNS.length - 1; // 21 → колонка V
+const LAST = col(LEAD_COLUMNS.length); // "V"
 
 export type LeadRef = { row: number; lead: StoredLead };
 
@@ -67,6 +68,7 @@ function leadToRow(lead: StoredLead, tz: string): string[] {
     `${CONTACT_METHOD_LABELS[lead.contact_method]}: ${lead.contact}`,
     STATUS_LABELS[lead.status],
     lead.reject_reason ? REJECT_REASON_LABELS[lead.reject_reason] + (lead.reject_note ? `: ${lead.reject_note}` : "") : "",
+    lead.contract_number ?? "",
     lead.case_url ?? "",
     "", // Заметки — не трогаем
     t.utm_source ?? "",
@@ -134,8 +136,8 @@ export async function writeLead(hintRow: number, lead: StoredLead, tz: string, c
     body: {
       valueInputOption: "RAW",
       data: [
-        { range: `'${LEADS_SHEET}'!A${row}:L${row}`, values: [values.slice(0, NOTES)] },
-        { range: `'${LEADS_SHEET}'!N${row}:${LAST}${row}`, values: [values.slice(NOTES + 1)] },
+        { range: `'${LEADS_SHEET}'!A${row}:${col(NOTES)}${row}`, values: [values.slice(0, NOTES)] },
+        { range: `'${LEADS_SHEET}'!${col(NOTES + 2)}${row}:${LAST}${row}`, values: [values.slice(NOTES + 1)] },
       ],
     },
   });
